@@ -162,6 +162,7 @@ RUN printf '%s\n' \
         patchelf \
         python3-pip \
         sqlite3 \
+        squashfs-tools \
         squashfuse \
         unzip \
         wget \
@@ -263,8 +264,21 @@ RUN set -eux; \
     curl --fail --location --show-error \
         --output /usr/local/bin/linuxdeploy-plugin-appimage \
         "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/${LINUXDEPLOY_PLUGIN_APPIMAGE_VERSION}/linuxdeploy-plugin-appimage-${ARCH}.AppImage"; \
-    echo "${linuxdeploy_plugin_appimage_sha256}  /usr/local/bin/linuxdeploy-plugin-appimage" | sha256sum --check --strict; \
-    chmod 0755 /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-plugin-qt /usr/local/bin/linuxdeploy-plugin-appimage
+    echo "${linuxdeploy_plugin_appimage_sha256}  /usr/local/bin/linuxdeploy-plugin-appimage" | sha256sum --check --strict
+
+# QEMU's binfmt rules can reject the AppImage marker in an ELF header.
+# Extract the verified tools without executing their AppImage runtimes.
+# These type-2 AppImages store SquashFS immediately after the ELF section table.
+RUN set -eu; \
+    for tool in linuxdeploy linuxdeploy-plugin-qt linuxdeploy-plugin-appimage; do \
+        offset="$(LC_ALL=C readelf -h "/usr/local/bin/${tool}" | awk \
+            '/Start of section headers:/ { start = $5 } \
+             /Size of section headers:/ { size = $5 } \
+             /Number of section headers:/ { count = $5 } \
+             END { print start + size * count }')"; \
+        unsquashfs -no-progress -offset "${offset}" -dest "/opt/${tool}" "/usr/local/bin/${tool}"; \
+        ln -sfn "/opt/${tool}/AppRun" "/usr/local/bin/${tool}"; \
+    done
 
 # The AppImage runtime must match the target architecture.
 # package_linux.sh passes it to the plugin through LDAI_RUNTIME_FILE.
